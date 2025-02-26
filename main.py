@@ -3,7 +3,7 @@ import base
 import ptvsd
 import os
 
-os.environ["OPENAI_API_KEY"] = "*****************************************************"
+os.environ["OPENAI_API_KEY"] = ""
 
 if os.getenv('DEBUG_MODE') == "1":
     # デバッグ用コード
