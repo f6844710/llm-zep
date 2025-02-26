@@ -15,7 +15,13 @@ async def websocket_endpoint(websocket: WebSocket):
         await main(websocket)
     except Exception as e:
         print(f"WebSocket Endpoint Error: {e}")
-        await websocket.close()
+    finally:
+        # 接続が閉じられているか確認してから閉じる
+        try:
+            await websocket.close()
+        except RuntimeError:
+            # すでに閉じられている場合
+            pass
 
 @router.get("/test")
 async def test():
