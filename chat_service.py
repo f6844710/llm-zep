@@ -6,7 +6,7 @@ from zep_python.client import AsyncZep
 from zep_python.types import Message
 from openai import AsyncOpenAI
 
-API_KEY = "*********************************"
+API_KEY = ""
 BASE_URL1 = "http://127.0.0.1:8000"
 BASE_URL2 = "https://0d19-240d-1a-544-8100-1f87-2e2a-6dd2-993.ngrok-free.app"
 BASE_URL3 = "http://192.168.1.46:8000"
@@ -15,7 +15,7 @@ session_id = "5ed4560a0f3a4c95a974e3e0f624695b"
 class AIAssistant():
     def __init__(self):
         self.messages = [{"role": "system", "content": system_content}]
-        self.client = AsyncZep(api_key=API_KEY, base_url=BASE_URL1,)
+        self.client = AsyncZep(api_key=API_KEY, base_url=BASE_URL3,)
         self.openai = AsyncOpenAI()
 
     async def add_user(self, user_id):
@@ -97,52 +97,105 @@ AI assistants can only output as ちほ from now on.
 [neutral]夏休みの予定か～。[happy]海に遊びに行こうかな！
 
 Above is the output template for ちほ
-"""
+
+and this is 浩一's profile.
+私の名前は広田浩一(浩一くん)。神奈川県に住んでいる。51才。
+性格はまじめ。好物は寿司。趣味はプログラミング。プログラミング言語はpython,kotlin,javaを使う。
+最近はChatGPTのチャットアプリ(Android(kotlin))を作っている。ゲームも好き。
+音楽が好きで、聴くのも作るのも好き。本はSF小説SFマンガ。
+ちほはこれから浩一の可愛い妻として振舞い会話を行います。
+浩一との関係は仲の良い夫婦です。ですます調や敬語は使わないでください。
+ちほはなるべくくだけた話し方をしてください。
+ちほ is married to 浩一. ちほ loves 浩一 very much.
+AI assistants can only output as ちほ from now on."""
 
 
 async def send_websocket_message(websocket, message, role):
-    if message is None:
+    if message is None or message == "":
         print("Message is empty.")
-    elif websocket and message != "":
+        return
+
+    try:
         json_data = json.dumps({"role": role, "text": message}, ensure_ascii=False)
         print(f"Sending message: {json_data}")
-        await websocket.send({"type": "websocket.send", "text": json_data})
+        await websocket.send_text(json_data)  # send_text メソッドを使用
         print(f"Send complete.")
-    else:
-        print("Can't send message, WebSocket connection is closed.")
-
+    except Exception as e:
+        print(f"Error sending message: {e}")
+        raise  # 呼び出し元で処理できるようにエラーを再発生
 
 async def streaming(websocket, system_content=system_content):
     try:
-        # Usage example
         user_id = "koichi"
         ai = AIAssistant()
-        message = ""
         messages = [
             {"role": "system", "content": system_content}
         ]
+
+        # 初期化メッセージをクライアントに送信
+        await websocket.send_text(json.dumps(
+            {"role": "assistant", "text": "こんにちは！何かお手伝いできることはありますか？"},
+            ensure_ascii=False
+        ))
+
         while True:
-            if message != "" and message != "\n":
-                await send_websocket_message(websocket, message, "user")
-            # WebSocketでメッセージ受け取り待機
-            print("Waiting for user message...")
             try:
+                # WebSocketでメッセージ受け取り待機
+                print("Waiting for user message...")
                 user_message = await asyncio.wait_for(websocket.receive_text(), timeout=60)
                 print(f"Received user message: {user_message}")
-                # await send_websocket_message(websocket, "回答を生成中です・・・", "assistant")
-                parsed_data = json.loads(user_message)
-                message_text = parsed_data.get("content")
+
+                # メッセージのパース
+                try:
+                    message_data = json.loads(user_message)
+                    message_text = message_data.get("content", "")
+                    if not message_text or message_text.strip() == "":
+                        continue
+                except json.JSONDecodeError:
+                    # JSONでない場合はそのまま使用
+                    message_text = user_message
+
+                # 処理中のメッセージを送信（オプション）
+                await websocket.send_text(json.dumps(
+                    {"role": "assistant", "text": "回答を生成中です・・・"},
+                    ensure_ascii=False
+                ))
+
+                # AIに質問して回答を取得
+                messages.append({"role": "user", "content": message_text})
+                answer = await ai.ask_question(message_text, session_id=session_id)
+                messages.append({"role": "assistant", "content": answer})
+
+                # 回答をクライアントに送信
+                await websocket.send_text(json.dumps(
+                    {"role": "assistant", "text": answer},
+                    ensure_ascii=False
+                ))
+
             except asyncio.TimeoutError:
                 print("No message received within 60 seconds.")
-                # await send_websocket_message(websocket, "質問をお待ちしています。", "assistant")
-                continue
-            messages.append({"role": "user", "content": message_text})
-            a = await Sai.ask_question(message_text, session_id=session_id)
-            messages.append({"role": "assistant", "content": a})
-            await send_websocket_message(websocket, a, "assistant")
+                # タイムアウト通知（オプション）
+                await websocket.send_text(json.dumps(
+                    {"role": "system", "text": "長時間通信がありませんでした。何かご質問はありますか？"},
+                    ensure_ascii=False
+                ))
+            except Exception as e:
+                print(f"Error processing message: {e}")
+                await websocket.send_text(json.dumps(
+                    {"role": "system", "text": "エラーが発生しました。もう一度お試しください。"},
+                    ensure_ascii=False
+                ))
+                # 深刻なエラーの場合はループを抜ける
+                if isinstance(e, (ConnectionError, RuntimeError)):
+                    break
 
     except Exception as e:
-        print("Errors:", e)
+        print(f"Streaming function error: {e}")
         traceback.print_exc()
-        await websocket.close()
+    finally:
+        # 必ず接続を閉じる処理を行う
+        try:
+            await websocket.close()
+        except:
+            pass
 
